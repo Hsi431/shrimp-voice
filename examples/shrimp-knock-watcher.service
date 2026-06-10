@@ -1,0 +1,12 @@
+[Unit]
+Description=🦐 SHRIMP 敲桌召喚 watcher
+After=shrimp-voice.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/shrimp-voice/server/knock_watcher.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

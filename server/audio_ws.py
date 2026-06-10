@@ -75,6 +75,7 @@ SSL_KEY = ENV.get("SSL_KEY", os.path.join(BASE_DIR, "key.pem"))
 
 SAMPLERATE = 16000
 WAKE_AUDIO_BYTES = b""
+WAKE_REQUEST = {"ts": 0}  # 遠端喚醒請求（敲桌召喚），由第一個待命連線取走
 SILENCE_CHUNKS_TO_END = 3
 ACTIVE_WEBSOCKETS = set()
 BACKGROUND_TASKS = set()
@@ -196,6 +197,14 @@ async def accel_raw_handler(request):
         "values": list(SENSOR_ACCEL_RAW)
     })
 
+async def wake_handler(request):
+    """遠端喚醒：與喚醒詞走同一條下游（敲桌召喚用）。"""
+    if WS_TOKEN and request.query.get("token", "") != WS_TOKEN:
+        return web.Response(status=401, text="unauthorized")
+    WAKE_REQUEST["ts"] = now_ms()
+    audio_log("remote_wake_requested")
+    return web.json_response({"ok": True})
+
 async def on_startup(app):
     """預載喚醒音效 [在！]"""
     global WAKE_AUDIO_BYTES
@@ -284,6 +293,20 @@ async def audio_handler(request):
     
     try:
         async for msg in ws:
+            # 遠端喚醒（敲桌召喚）：感測器訊息持續流動，省流量靜音時也能即時消費
+            if (not is_awake and not turn_state["processing"]
+                    and now_ms() >= turn_state["cooldown_until"]
+                    and WAKE_REQUEST["ts"] and now_ms() - WAKE_REQUEST["ts"] < 3000):
+                WAKE_REQUEST["ts"] = 0
+                wake_ms = now_ms()
+                latency_log("wake_detected", trigger="remote")
+                audio_log("wake_detected_remote", connElapsedMs=wake_ms - conn_ms)
+                is_awake = True
+                if WAKE_AUDIO_BYTES: await ws.send_bytes(WAKE_AUDIO_BYTES)
+                await send_ui_log(ws, "SYS", "已喚醒！老闆請講...", "wake_detected")
+                p_buf, s_buf, silence, pre_buf = [], [], 0, []
+                awake_chunks, speech_chunks, vad_silence_chunks = 0, 0, 0
+
             # 🦐 感測器資料 (proximity / accel) — 文字訊息
             if msg.type == WSMsgType.TEXT:
                 try:
@@ -682,6 +705,7 @@ app.router.add_get("/rms_raw", rms_raw_handler)
 app.router.add_get("/proximity", proximity_handler)
 app.router.add_get("/accel", accel_handler)
 app.router.add_get("/accel_raw", accel_raw_handler)
+app.router.add_post("/wake", wake_handler)
 # Static files for PWA
 app.router.add_static("/static", os.path.join(BASE_DIR, "static"))
 app.router.add_get("/manifest.json", lambda r: web.json_response({
