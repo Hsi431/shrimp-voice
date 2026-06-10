@@ -416,20 +416,34 @@ class VoiceSatelliteService : LifecycleService() {
 
     private fun startSensors() {
         if (sensorsRegistered) return
+        val sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        sensorManager = sm
         try {
-            val sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-            sensorManager = sm
             sm.getDefaultSensor(Sensor.TYPE_PROXIMITY)?.let {
                 sm.registerListener(proximityListener, it, SensorManager.SENSOR_DELAY_NORMAL)
             }
-            sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
-                sm.registerListener(accelListener, it, SensorManager.SENSOR_DELAY_GAME)
-            }
-            sensorsRegistered = true
-            Timber.d("Sensors registered (proximity + accelerometer)")
         } catch (e: Exception) {
-            Timber.e(e, "Failed to register sensors")
+            Timber.e(e, "[sensor] proximity register FAILED")
         }
+        try {
+            sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                // FASTEST：敲擊脈衝只有 5~10ms，50Hz(GAME) 會直接漏採峰值；
+                // >200Hz 需要 HIGH_SAMPLING_RATE_SENSORS 權限（manifest 已加）。
+                // 上傳仍由 ACCEL_SEND_INTERVAL_MS 節流（區間取峰），頻寬不變
+                sm.registerListener(accelListener, it, SensorManager.SENSOR_DELAY_FASTEST)
+                Timber.i("[sensor] accelerometer registered at FASTEST")
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "[sensor] accelerometer FASTEST register FAILED, falling back to GAME")
+            try {
+                sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                    sm.registerListener(accelListener, it, SensorManager.SENSOR_DELAY_GAME)
+                }
+            } catch (e2: Exception) {
+                Timber.e(e2, "[sensor] accelerometer register FAILED")
+            }
+        }
+        sensorsRegistered = true
     }
 
     private fun stopSensors() {
