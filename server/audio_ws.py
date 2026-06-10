@@ -274,6 +274,7 @@ async def audio_handler(request):
         print(f"Error: Porcupine 載入失敗: {e}"); await ws.close(); return ws
 
     is_awake, p_buf, s_buf, pre_buf, silence, wake_ms = False, [], [], [], 0, None
+    last_bin_ms = None
     turn_state = {"processing": False, "cooldown_until": 0}
     total_chunks, total_bytes = 0, 0
     pre_wake_chunks, pre_wake_bytes = 0, 0
@@ -306,6 +307,13 @@ async def audio_handler(request):
                 continue
 
             if msg.type == WSMsgType.BINARY:
+                bin_ms = now_ms()
+                # 省流量 gate 會造成串流斷層；跳接會污染 Porcupine 內部狀態，
+                # 害喚醒詞分數被拉低。斷層後墊靜音把狀態洗回乾淨基線。
+                if not is_awake and last_bin_ms is not None and bin_ms - last_bin_ms > 1000:
+                    p_buf = [0] * int(SAMPLERATE * 0.8)
+                    audio_log("stream_gap_padded", gapMs=bin_ms - last_bin_ms)
+                last_bin_ms = bin_ms
                 total_chunks += 1
                 total_bytes += len(msg.data)
                 data_i16 = np.frombuffer(msg.data, dtype=np.int16)

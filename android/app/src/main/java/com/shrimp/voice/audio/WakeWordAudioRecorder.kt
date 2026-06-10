@@ -29,6 +29,8 @@ class PcmAudioStreamer(
     private var audioRecord: AudioRecord? = null
     @Volatile private var isPaused = false
     @Volatile private var forceUploadUntilMs = 0L
+    // 播放音效暫停上傳期間先暫存麥克風，恢復後補送——防止使用者搶在「在！」播完前講話被吃字
+    private val pauseBuffer = ArrayDeque<ByteArray>()
 
     data class GateMetrics(
         val totalFrames: Long = 0,
@@ -111,21 +113,37 @@ class PcmAudioStreamer(
                 if (offset == frame.size) {
                     val rms = calculateRms(frame)
                     onAudioLevel(rms)
-                    if (!isPaused) {
+                    if (isPaused) {
+                        synchronized(pauseBuffer) {
+                            pauseBuffer.addLast(frame.copyOf())
+                            while (pauseBuffer.size > PAUSE_BUFFER_FRAMES) pauseBuffer.removeFirst()
+                        }
+                    } else {
+                        val backlog = synchronized(pauseBuffer) {
+                            if (pauseBuffer.isEmpty()) emptyList() else pauseBuffer.toList().also { pauseBuffer.clear() }
+                        }
+                        if (backlog.isNotEmpty()) {
+                            Timber.i("[voice-gate] flushing %d paused frames", backlog.size)
+                            backlog.forEach(onPcmFrame)
+                        }
                         val forceUpload = System.currentTimeMillis() < forceUploadUntilMs
                         if (lowBandwidthMode && !forceUpload) {
+                            // 開關門用 64ms 子視窗峰值：短音節（蝦蝦）能量集中，
+                            // 256ms 整段平均會被靜音稀釋導致輕聲喊不開門
+                            val gateLevel = calculateMaxSubRms(frame)
                             val wasOpen = gate.isOpen
-                            val framesToSend = gate.accept(frame, rms)
+                            val framesToSend = gate.accept(frame, gateLevel)
                             framesToSend.forEach(onPcmFrame)
                             if (wasOpen != gate.isOpen) {
                                 Timber.i(
-                                    "[voice-gate] transition=%s rms=%d preRollFrames=%d",
+                                    "[voice-gate] transition=%s gateLevel=%d frameRms=%d preRollFrames=%d",
                                     if (gate.isOpen) "open" else "closed",
+                                    gateLevel,
                                     rms,
                                     framesToSend.size
                                 )
                             }
-                            metrics.record(rms, gate.isOpen, framesToSend.size)
+                            metrics.record(gateLevel, gate.isOpen, framesToSend.size)
                             metrics.maybeSnapshot()?.let(onGateMetrics)
                             onGateStateChange(gate.isOpen)
                         } else {
@@ -154,6 +172,29 @@ class PcmAudioStreamer(
     private fun hasRecordAudioPermission(): Boolean {
         return ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
+    }
+
+    /** 把 frame 切成 SUB_WINDOWS 段，回傳最大段的 RMS。 */
+    private fun calculateMaxSubRms(frame: ByteArray): Int {
+        val subBytes = frame.size / SUB_WINDOWS
+        var maxRms = 0
+        for (w in 0 until SUB_WINDOWS) {
+            var sum = 0.0
+            var count = 0
+            var i = w * subBytes
+            val end = minOf(i + subBytes, frame.size)
+            while (i + 1 < end) {
+                val sample = ((frame[i + 1].toInt() shl 8) or (frame[i].toInt() and 0xff)).toShort().toInt()
+                sum += sample.toDouble() * sample.toDouble()
+                count++
+                i += 2
+            }
+            if (count > 0) {
+                val rms = kotlin.math.sqrt(sum / count).toInt()
+                if (rms > maxRms) maxRms = rms
+            }
+        }
+        return maxRms
     }
 
     private fun calculateRms(frame: ByteArray): Int {
@@ -212,9 +253,10 @@ class PcmAudioStreamer(
         }
 
         companion object {
-            // S23 實測：安靜房間 avg RMS ~235、正常講話峰值 ~1477（frame=256ms）
-            // 開門要低於講話音量、高於環境噪音；關門要撐過換氣停頓不剪碎句子
-            private const val OPEN_RMS_THRESHOLD = 600
+            // 門檻比對的是 64ms 子視窗峰值 RMS（calculateMaxSubRms）。
+            // S23 實測：噪音底 frame-avg ~158，喊「蝦蝦」frame-avg 638~907；
+            // 子視窗峰值約為 frame-avg 的 2~3 倍，700 對輕聲喊仍有餘裕
+            private const val OPEN_RMS_THRESHOLD = 700
             private const val OPEN_LOUD_FRAMES = 1
             private const val PRE_ROLL_FRAMES = 6
             private const val CLOSE_SILENT_FRAMES = 8
@@ -276,5 +318,9 @@ class PcmAudioStreamer(
         private const val BYTES_PER_SAMPLE = 2
         private const val FRAME_SAMPLES = 4_096
         private const val FRAME_BYTES = FRAME_SAMPLES * BYTES_PER_SAMPLE
+        // 1.5 秒：蓋過「在！」播放長度；太長會把長回覆的喇叭回音整段補送回伺服器
+        private const val PAUSE_BUFFER_FRAMES = 6
+        // gate 開關門判斷的子視窗數（256ms frame ÷ 4 = 64ms）
+        private const val SUB_WINDOWS = 4
     }
 }

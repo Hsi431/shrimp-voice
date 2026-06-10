@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -341,6 +342,7 @@ fun SettingsScreen() {
             ConversationCard(
                 logs = voiceLogs,
                 isServiceRunning = isServiceRunning,
+                phase = voicePhase,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 16.dp)
@@ -483,15 +485,28 @@ private fun StatusPill(text: String, color: Color) {
 private fun ConversationCard(
     logs: List<VoiceSatelliteService.VoiceLogEntry>,
     isServiceRunning: Boolean,
+    phase: VoiceSatelliteService.VoicePhase,
     modifier: Modifier = Modifier
 ) {
+    // 系統訊息不進泡泡流（狀態球已顯示階段），只留對話與錯誤
+    val chat = logs.filter {
+        when (it.tag.uppercase(Locale.ROOT)) {
+            "STT", "AI", "蝦蝦", "ERR" -> true
+            else -> false
+        }
+    }
+    val turnInProgress = phase == VoiceSatelliteService.VoicePhase.WAKE ||
+        phase == VoiceSatelliteService.VoicePhase.STT ||
+        phase == VoiceSatelliteService.VoicePhase.THINKING ||
+        phase == VoiceSatelliteService.VoicePhase.SPEAKING
+
     Column(
         modifier = modifier
             .background(Surface1.copy(alpha = 0.6f), RoundedCornerShape(24.dp))
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        if (logs.isEmpty()) {
+        if (chat.isEmpty() && !turnInProgress) {
             Text(
                 if (isServiceRunning) "對話會出現在這裡。試試喊「蝦蝦」！"
                 else "還沒有對話。開始聆聽後喊「蝦蝦」。",
@@ -504,7 +519,53 @@ private fun ConversationCard(
             )
             return@Column
         }
-        logs.takeLast(14).forEach { entry -> ChatRow(entry) }
+        chat.takeLast(14).forEach { entry -> ChatRow(entry) }
+        if (turnInProgress) {
+            TypingBubble(
+                label = when (phase) {
+                    VoiceSatelliteService.VoicePhase.WAKE -> "在聽"
+                    VoiceSatelliteService.VoicePhase.STT -> "聽懂中"
+                    VoiceSatelliteService.VoicePhase.SPEAKING -> "回覆中"
+                    else -> "思考中"
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun TypingBubble(label: String) {
+    val transition = rememberInfiniteTransition(label = "typing")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Column {
+            Text("🦐 蝦蝦 · $label", fontSize = 11.sp, color = Coral, modifier = Modifier.padding(start = 4.dp, bottom = 2.dp))
+            Row(
+                modifier = Modifier
+                    .background(Surface2, RoundedCornerShape(4.dp, 18.dp, 18.dp, 18.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(4.dp, 18.dp, 18.dp, 18.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                repeat(3) { i ->
+                    val alpha by transition.animateFloat(
+                        initialValue = 0.2f,
+                        targetValue = 0.9f,
+                        animationSpec = infiniteRepeatable(
+                            tween(durationMillis = 450),
+                            RepeatMode.Reverse,
+                            initialStartOffset = StartOffset(i * 150)
+                        ),
+                        label = "dot$i"
+                    )
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .background(Coral.copy(alpha = alpha), CircleShape)
+                    )
+                }
+            }
+        }
     }
 }
 
