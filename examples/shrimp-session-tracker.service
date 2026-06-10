@@ -1,0 +1,6 @@
+[Unit]
+Description=Shrimp Voice - 同步 OpenClaw Discord session
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/shrimp-voice/server/session_tracker.py

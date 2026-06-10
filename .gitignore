@@ -1,0 +1,23 @@
+# secrets / 帳號綁定檔
+.env
+*.ppn
+*.pv
+cert.pem
+key.pem
+
+# python
+__pycache__/
+*.pyc
+
+# android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+.idea/
+*.iml
+
+# misc
+*.log
+node_modules/

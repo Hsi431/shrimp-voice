@@ -1,0 +1,17 @@
+# systemd user unit 範例：放到 ~/.config/systemd/user/ 並把路徑改成你的 clone 位置
+# systemctl --user daemon-reload && systemctl --user enable --now shrimp-voice
+[Unit]
+Description=Shrimp Voice - 語音對話服務
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/shrimp-voice/server
+ExecStart=/usr/bin/python3 %h/shrimp-voice/server/audio_ws.py
+Restart=always
+RestartSec=5
+MemoryHigh=3G
+MemoryMax=4G
+
+[Install]
+WantedBy=default.target

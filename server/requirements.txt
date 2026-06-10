@@ -1,0 +1,7 @@
+aiohttp
+numpy
+torch
+silero-vad
+pvporcupine
+edge-tts
+requests
