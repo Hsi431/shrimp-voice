@@ -24,7 +24,8 @@
 - **省流量模式**：安靜時暫停上傳（0 KB），偵測到聲音自動補送 1.5 秒 pre-roll，喚醒後 12 秒全量保證對話完整
 - **回音防護**：播放回覆時手機麥克風自動暫停，不會自己喚醒自己
 - **連線 token 驗證**：區網內也不裸奔
-- **感測器旁路**：手機的距離感測器和加速度計即時上傳（`/proximity`、`/accel`），可拿來做敲桌召喚之類的玩法
+- **感測器旁路**：手機的距離感測器和加速度計即時上傳（`/proximity`、`/accel`），可拿來做手勢觸發
+- **敲擊召喚**：附 `knock_watcher.py`——敲兩下手機（雙脈衝偵測）等同喊喚醒詞，走 `POST /wake` 與語音喚醒同一條下游
 - **雙 client**：Android 原生 App（前景服務常駐）+ 瀏覽器 PWA
 
 ## 你需要自己申請的東西（都免費）
@@ -63,7 +64,8 @@ python3 audio_ws.py
 
 看到 `喚醒音效 [在！] 已就緒` 就是活了。瀏覽器開 `https://<server-ip>:8443/`（自簽憑證要手動信任一次；有設 token 的話第一次帶 `?token=你的token`）。
 
-長期跑用 systemd：`examples/` 裡有現成的 user unit，含每分鐘自動同步 OpenClaw session 的 timer。
+長期跑用 systemd：`examples/` 裡有現成的 user unit，含每分鐘自動同步 OpenClaw session 的 timer，
+以及選配的 `shrimp-knock-watcher.service`（敲擊召喚，吃同一個 `.env` token）。
 
 > ⚠️ 有開防火牆（ufw 等）記得放行：`sudo ufw allow from 192.168.0.0/16 to any port 8443 proto tcp`
 
